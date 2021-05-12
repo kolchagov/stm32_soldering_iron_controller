@@ -29,20 +29,32 @@ static int8_t Slp_xadd=1, Slp_yadd=1;
 
 static int32_t temp;
 static char *tipName[TipSize];
-enum mode{  main_irontemp=0, main_disabled, main_ironstatus, main_setpoint, main_tipselect, main_menu,  main_setMode};
+enum mode{  main_irontemp=0, main_disabled, main_ironstatus, main_setpoint, main_tipselect, main_setMode};
 enum{ status_running=0x20, status_sleep, status_error };
 enum { temp_numeric, temp_graph };
-const uint8_t pulseXBM[] ={
-	8,9,
-	0x04, 0x0A, 0x0A, 0x0A, 0x89, 0x50, 0x50, 0x50, 0x20, };
+const uint8_t shakeXBM[] ={
+	9, 9,
+	0x70, 0x00, 0x80, 0x00, 0x30, 0x01, 0x40, 0x01, 0x45, 0x01, 0x05, 0x00,
+  0x19, 0x00, 0x02, 0x00, 0x1C, 0x00, };
+
 
 const uint8_t tempXBM[] ={
-	5,10,
-	0x04, 0x0A, 0x0A, 0x0A, 0x0E, 0x0E, 0x1F, 0x1F, 0x1F, 0x0E, };
+	10, 13,
+  0x70, 0x00, 0x8B, 0x00, 0x88, 0x00, 0xAB, 0x00, 0xA8, 0x00, 0xAB, 0x00,
+  0xA8, 0x00, 0x24, 0x01, 0x72, 0x02, 0x72, 0x02, 0x72, 0x02, 0x04, 0x01,
+  0xF8, 0x00, };
 
+#ifdef USE_VIN
 const uint8_t voltXBM[] ={
-	5,10,
-	0x10, 0x08, 0x0C, 0x06, 0x0F, 0x1E, 0x0C, 0x06, 0x02, 0x01, };
+	6, 9,
+	0x30, 0x18, 0x0C, 0x06, 0x1F, 0x18, 0x0C, 0x06, 0x01, };
+#endif
+
+const uint8_t warningXBM[] ={
+  13, 13,
+  0x40, 0x00, 0xA0, 0x00, 0xA0, 0x00, 0x10, 0x01, 0x10, 0x01, 0x48, 0x02,
+  0x48, 0x02, 0x44, 0x04, 0x44, 0x04, 0x02, 0x08, 0x42, 0x08, 0x01, 0x10,
+  0xFF, 0x1F, };
 
 //-------------------------------------------------------------------------------------------------------------------------------
 // Main screen widgets
@@ -204,6 +216,13 @@ static void setMainScrTempUnit(void) {
 
 static void main_screen_init(screen_t *scr) {
 	default_init(scr);
+
+	mainScr.currentMode = main_irontemp;
+  setMainWidget(&Widget_IronTemp);
+  if(mainScr.displayMode==temp_graph){
+    widgetDisable(&Widget_IronTemp);
+  }
+
 	editable_TipSelect.numberOfOptions = systemSettings.Profile.currentNumberOfTips;
   editable_SetPoint.step = systemSettings.settings.tempStep;
   editable_SetPoint.big_step = systemSettings.settings.tempStep;
@@ -217,6 +236,7 @@ static void main_screen_init(screen_t *scr) {
 int main_screenProcessInput(screen_t * scr, RE_Rotation_t input, RE_State_t *state) {
 	updateIronPower();
 	uint32_t currentTime = HAL_GetTick();
+	uint8_t error = GetIronError();
 
 	if(mainScr.update){							            // This was set on a previous pass. We reset the flag now.
 		mainScr.update = 0;
@@ -226,8 +246,10 @@ int main_screenProcessInput(screen_t * scr, RE_Rotation_t input, RE_State_t *sta
 		mainScr.updateTick=currentTime;
 	}
 
-	if(GetIronError()){
-		mainScr.ironStatus = status_error;
+	if(error){
+	  if(!(mainScr.ironStatus == status_sleep && error==1)){
+	    mainScr.ironStatus = status_error;
+	  }
 	}
 	else if(getCurrentMode()==mode_sleep){
 		mainScr.ironStatus = status_sleep;
@@ -243,7 +265,7 @@ int main_screenProcessInput(screen_t * scr, RE_Rotation_t input, RE_State_t *sta
 	else if(Iron.newActivity && mainScr.ActivityOn){
 		if((currentTime-Iron.lastActivityTime)>200){
 			u8g2_SetDrawColor(&u8g2, BLACK);
-			u8g2_DrawBox(&u8g2, 0,OledHeight-pulseXBM[1], pulseXBM[0], pulseXBM[1]);
+			u8g2_DrawBox(&u8g2, 0,OledHeight-shakeXBM[1], shakeXBM[0], shakeXBM[1]);
 			mainScr.ActivityOn=0;
 			Iron.newActivity=0;
 		}
@@ -264,6 +286,7 @@ int main_screenProcessInput(screen_t * scr, RE_Rotation_t input, RE_State_t *sta
 				memset(plotData,0,sizeof(plotData));						  // Clear plotdata
 				plot_Index=0;													            // Reset X
 				mainScr.setMode=main_disabled;
+				mainScr.ActivityOn = 0;
 				mainScr.currentMode=main_setMode;
 				break;
 			}
@@ -301,7 +324,9 @@ int main_screenProcessInput(screen_t * scr, RE_Rotation_t input, RE_State_t *sta
 			enum{ dim_idle, dim_down, dim_up };
 			static uint8_t dimDisplay=dim_idle;
 			static uint32_t dimTimer=0;
-			if(((currentTime-mainScr.idleTick)>5000) && (getContrast()>5)){
+			uint8_t contrast = getContrast();
+
+			if((currentTime-mainScr.idleTick)>15000 && contrast>5){
 				dimDisplay=dim_down;
 			}
 			if((input==Rotate_Decrement) || (input==Rotate_Increment)){
@@ -313,8 +338,7 @@ int main_screenProcessInput(screen_t * scr, RE_Rotation_t input, RE_State_t *sta
 			}
 
 			if(dimDisplay!=dim_idle){
-				if(currentTime-dimTimer>9){
-					uint8_t contrast = getContrast();
+				if(systemSettings.settings.screenDimming && currentTime-dimTimer>9){
 					dimTimer = currentTime;
 					mainScr.idleTick = currentTime;
 					if(dimDisplay==dim_down){
@@ -352,15 +376,11 @@ int main_screenProcessInput(screen_t * scr, RE_Rotation_t input, RE_State_t *sta
 			}
 			break;
 		}
-		case main_menu:
-			if(currentTime-mainScr.idleTick > 5000){
-				mainScr.currentMode=main_setMode;
-				mainScr.setMode=main_irontemp;
-			}
-			break;
-		case main_setpoint:
 		case main_tipselect:
-
+      if(input==LongClick){
+        return screen_edit_tip_settings;
+      }
+		case main_setpoint:
 			switch((uint8_t)input){
 				case LongClick:
 					return -1;
@@ -400,8 +420,6 @@ int main_screenProcessInput(screen_t * scr, RE_Rotation_t input, RE_State_t *sta
 			if(mainScr.displayMode==temp_graph){
 				widgetDisable(&Widget_IronTemp);
 			}
-			break;
-		case main_menu:
 			break;
 		case main_setpoint:
 			setMainWidget(&Widget_SetPoint);
@@ -461,7 +479,7 @@ void main_screen_draw(screen_t *scr){
 			if(Slp_ypos+sleepHeigh>OledHeight){
 				Slp_yadd = -1;
 			}
-			else if(Slp_ypos<14){
+			else if(Slp_ypos<16){
 				Slp_yadd = 1;
 			}
 		}
@@ -479,14 +497,14 @@ void main_screen_draw(screen_t *scr){
 		u8g2_SetDrawColor(&u8g2, WHITE);
 
 		#ifdef USE_NTC
-		u8g2_DrawXBMP(&u8g2, Widget_AmbTemp.posX-tempXBM[0]-2, Widget_AmbTemp.posY, tempXBM[0], tempXBM[1], &tempXBM[2]);
+		u8g2_DrawXBMP(&u8g2, Widget_AmbTemp.posX-tempXBM[0]-2, 0, tempXBM[0], tempXBM[1], &tempXBM[2]);
 		#endif
 
 		#ifdef USE_VIN
-		u8g2_DrawXBMP(&u8g2, Widget_Vsupply.posX-voltXBM[0]-2, Widget_Vsupply.posY, voltXBM[0], voltXBM[1], &voltXBM[2]);
+		u8g2_DrawXBMP(&u8g2, 0, 2, voltXBM[0], voltXBM[1], &voltXBM[2]);
 		#endif
 		if(mainScr.ActivityOn){
-			u8g2_DrawXBMP(&u8g2, 0,OledHeight-pulseXBM[1], pulseXBM[0], pulseXBM[1], &pulseXBM[2]);
+			u8g2_DrawXBMP(&u8g2, 57, 2, shakeXBM[0], shakeXBM[1], &shakeXBM[2]);
 		}
 		if(mainScr.currentMode==main_disabled){
 			u8g2_SetFont(&u8g2, u8g2_font_mainBig);
@@ -528,6 +546,11 @@ void main_screen_draw(screen_t *scr){
 			}
 			else if(mainScr.ironStatus==status_sleep){
 				u8g2_DrawStr(&u8g2, Slp_xpos, Slp_ypos, "SLEEP");
+				u8g2_SetFont(&u8g2, u8g2_font_labels);
+				if(!Iron.Error.Flags && readTipTemperatureCompensated(0,0)>120){
+				  u8g2_DrawXBMP(&u8g2, 42,0, warningXBM[0], warningXBM[1], &warningXBM[2]);
+				  u8g2_DrawStr(&u8g2, 55, 2, "HOT!");
+				}
 			}
 		}
 		else if(mainScr.currentMode==main_tipselect){
@@ -549,6 +572,7 @@ void main_screen_draw(screen_t *scr){
 
 		if((scr_refresh || plotUpdate) && mainScr.currentMode==main_irontemp && mainScr.displayMode==temp_graph){	//Update every 100mS or if screen is erased
 			plotUpdate=0;
+			uint8_t set;
 			int16_t t = Iron.CurrentSetTemperature;
 
 			bool magnify = true;		                        // for future, to support both graph types
@@ -576,9 +600,7 @@ void main_screen_draw(screen_t *scr){
 					else plotV = (plotV-t+20) ; 					      // relative to t, +-20C
 					u8g2_DrawVLine(&u8g2, x+13, 56-plotV, plotV);	// data points
 				}
-
-				uint8_t set= 36;
-				u8g2_DrawTriangle(&u8g2, 124, set-5, 124, set+5, 115, set);		// set temp marker
+				set= 36;
 
 			} else {												                // graphing full range
 				for(uint8_t y=16; y<57; y+=13){
@@ -595,18 +617,18 @@ void main_screen_draw(screen_t *scr){
 					else plotV = (plotV-180) >> 3; 					      // divide by 8, (500-180)/8=40
 					u8g2_DrawVLine(&u8g2, x+13, 56-plotV, plotV);	// data points
 				}
-
-				uint8_t set;
 				if(t<188){ set = 1; }
 				else {
 					set=(t-180)>>3;
 				}
 				set= 56-set;
-				u8g2_DrawTriangle(&u8g2, 124, set-5, 124, set+5, 115, set);		// set temp marker
 			}
+
+			u8g2_DrawTriangle(&u8g2, 122, set-4, 122, set+4, 115, set);		// set temp marker
 		}
 	}
 }
+
 
 //-------------------------------------------------------------------------------------------------------------------------------
 // Main screen setup
@@ -621,7 +643,7 @@ void main_screen_setup(screen_t *scr) {
 	screen_setDefaults(scr);
 	scr->draw = &main_screen_draw;
 	scr->init = &main_screen_init;
-	scr->processInput = &main_screenProcessInput;
+  scr->processInput = &main_screenProcessInput;
 	widget_t *w;
 	displayOnly_widget_t* dis;
   editable_widget_t* edit;

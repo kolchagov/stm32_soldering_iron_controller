@@ -18,7 +18,7 @@
 
 #define T12_Cal250		1400                                        // Default values to be used in the calibration if not adjusted
 #define T12_Cal350		2050
-#define T12_Cal450		2700
+#define T12_Cal450		2200
 
 #define C210_Cal250		400
 #define C210_Cal350		600
@@ -27,9 +27,10 @@
 #define C245_Cal250		1000
 #define C245_Cal350		1500
 #define C245_Cal450		2000
+
 //#define SWSTRING    "SW: v1.10"                                 // For releases
-#define SWSTRING		  "SW: git d6532b7"                             // For git
-#define SETTINGS_VERSION 1											                  // Change this if you change the struct below to prevent people getting out of sync
+#define SWSTRING		  "SW: git f6d8d72"                           // For git
+#define SETTINGS_VERSION 3											                  // Change this if you change the struct below to prevent people getting out of sync
 #define StoreSize 		2 											                    // In KB
 #define FLASH_ADDR 		(0x8000000 + ((FLASH_SZ-StoreSize)*1024))	  // Last 2KB flash (Minimum erase size, page size=2KB)
 
@@ -145,7 +146,9 @@ __attribute__ ((aligned (4))) typedef struct{
 	uint8_t     saveSettingsDelay;
 	uint8_t     initMode;
 	uint8_t     tempStep;
+	bool        screenDimming;
 	bool        tempUnit;
+  bool        activeDetection;
 	bool        buzzerMode;
   bool        wakeOnButton;
   bool        wakeOnShake;

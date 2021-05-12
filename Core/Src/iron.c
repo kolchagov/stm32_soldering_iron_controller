@@ -89,8 +89,13 @@ void handleIron(void) {
   }
   
   // If sleeping, stop here
-  if(Iron.CurrentMode==mode_sleep) {
-    Iron.Pwm_Out = PWMminOutput;                                            // For safety, update this everytime
+  if(Iron.CurrentMode==mode_sleep) {                                            // For safety, update PWM out everytime
+    if(systemSettings.settings.activeDetection){
+      Iron.Pwm_Out = PWMminOutput;
+    }
+    else{
+      Iron.Pwm_Out = 0;
+    }
     return;
   }
   
@@ -115,8 +120,9 @@ void handleIron(void) {
     Iron.Pwm_Limit = systemSettings.Profile.pwmPeriod - (systemSettings.Profile.pwmDelay + (uint16_t)ADC_MEASURE_TIME/10);
   }
 
-
+  #ifdef USE_VIN
   updatePowerLimit();                                                       // Update power limit values
+  #endif
 
   if(Iron.DebugMode==debug_On){                                             // If in debug mode, use debug setpoint value
     Iron.Pwm_Out = calculatePID(Iron.Debug_SetTemperature, TIP.last_avg, Iron.Pwm_Max);
@@ -124,7 +130,7 @@ void handleIron(void) {
   else{                                                                     // Else, use current setpoint value
     Iron.Pwm_Out = calculatePID(human2adc(Iron.CurrentSetTemperature), TIP.last_avg, Iron.Pwm_Max);
   }
-  if(Iron.Pwm_Out<=PWMminOutput){
+  if(systemSettings.settings.activeDetection && Iron.Pwm_Out<=PWMminOutput){
     Iron.CurrentIronPower = 0;
     Iron.Pwm_Out = PWMminOutput;                                            // Maintain iron detection
   }
@@ -179,13 +185,23 @@ void initTimers(void){
     pwm=19999;
   }
   // Delay timer config
+  #ifdef DELAY_TIMER_HALFCLOCK
+  Iron.Delay_Timer->Init.Prescaler = (SystemCoreClock/50000)-1;         // 10uS input clock
+  #else
   Iron.Delay_Timer->Init.Prescaler = (SystemCoreClock/100000)-1;        // 10uS input clock
+  #endif
+
   Iron.Delay_Timer->Init.Period = delay;
   if (HAL_TIM_Base_Init(Iron.Delay_Timer) != HAL_OK){
     Error_Handler();
   }
   // PWM timer config
+  #ifdef PWM_TIMER_HALFCLOCK
+  Iron.Pwm_Timer->Init.Prescaler = (SystemCoreClock/50000)-1;         // 10uS input clock
+  #else
   Iron.Pwm_Timer->Init.Prescaler = (SystemCoreClock/100000)-1;        // 10uS input clock
+  #endif
+
   Iron.Pwm_Timer->Init.Period = pwm;
   if (HAL_TIM_Base_Init(Iron.Pwm_Timer) != HAL_OK){
     Error_Handler();
@@ -289,6 +305,7 @@ void runAwayCheck(void){
 }
 
 // Update PWM max value based on current supply voltage, heater resistance and power limit setting
+#ifdef USE_VIN
 void updatePowerLimit(void){
   volatile uint32_t volts = getSupplyVoltage_v_x10();                     // Get last voltage reading x10
   volts = (volts*volts)/10;                                               // (Vx10 * Vx10)/10 = (V*V)*10 (x10 for fixed point precision)
@@ -307,6 +324,7 @@ void updatePowerLimit(void){
     }
   }
 }
+#endif
 
 // Loads the PWM delay
 bool setPwmDelay(uint16_t delay){
@@ -374,7 +392,7 @@ void IronWake(bool source){                       // source: handle shake, encod
   if(GetIronError()){ return; }                   // Ignore if error present
   if(Iron.CurrentMode==mode_sleep){
     // If in sleep mode, ignore if wake source disabled
-    if( (source==source_wakeButton && !systemSettings.settings.wakeOnButton) || (source==source_wakeInput && !systemSettings.settings.wakeOnShake)){
+    if( (source==source_wakeButton && (!systemSettings.settings.wakeOnButton || (systemSettings.settings.WakeInputMode==wakeInputmode_stand) )) || (source==source_wakeInput && !systemSettings.settings.wakeOnShake)){
       return;
     }
   }
@@ -418,22 +436,30 @@ void checkIronError(void){
   Err.failState = Iron.Error.failState;                                       // Get failState flag
   Err.NTC_high = ambTemp > 700 ? 1 : 0;                                       // Check NTC too high (Wrong NTC wiring or overheating, >70ºC)
   Err.NTC_low = ambTemp < -600 ? 1 : 0;                                       // Check NTC too low (If NTC is mounted in the handle, open circuit reports -70ºC or so)
+  #ifdef USE_VIN
   Err.V_low = getSupplyVoltage_v_x10() < 110 ? 1 : 0;                         // Check supply voltage (Mosfet will not work ok <12V, it will heat up) TODO: maybe set a menu item for this?
+  #endif
   Err.noIron = TIP.last_RawAvg>systemSettings.Profile.noIronValue ? 1 : 0;    // Check tip temperature too high (Wrong connection or not connected)
 
   if(CurrentTime<1000 || systemSettings.setupMode==setup_On){                 // Don't check sensor errors during first second or in setup mode, wait for readings need to get stable
     Err.Flags &= 0x10;                                                        // Only check failure state
   }
-  if(Err.Flags & ErrorMask){                                                  // If there are errors
+  if(Err.Flags){                                                              // If there are errors
     Iron.Error.Flags |= Err.Flags;                                            // Update flags
     Iron.LastErrorTime = CurrentTime;                                         // Save time
     if(!Iron.Error.globalFlag){                                               // If first detection
+      if(Err.Flags==1 && Iron.CurrentMode == mode_sleep){                     // If in sleep mode and only no iron flag is set
+        return;                                                               // return
+      }
       Iron.Error.globalFlag = 1;                                              // Set global flag
       setCurrentMode(mode_sleep);                                             // Force sleep mode
       Iron.Pwm_Out = PWMminOutput;                                            // Maintain iron detection because it's not critical error
       __HAL_TIM_SET_COMPARE(Iron.Pwm_Timer, Iron.Pwm_Channel, Iron.Pwm_Out);  // Load now the value into the PWM hardware
       buzzer_alarm_start();                                                   // Start alarm
     }
+  }
+  else if(!Err.Flags && Iron.Error.Flags==1){                                 // If no errors and only no iron flag was active (And no global flag, so it was detected while in sleep mode)
+    Iron.Error.Flags=0;                                                       // Clear
   }
   else if (Iron.Error.globalFlag && Err.Flags==noError){                      // If global flag set, but there are no errors anymore
     if((CurrentTime-Iron.LastErrorTime)>systemSettings.settings.errorDelay){  // Check enough time has passed

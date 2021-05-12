@@ -60,7 +60,7 @@ void saveSettings(bool wipeAllProfileData) {
 	}
 
 	//Clear watchdog before unlocking flash
-	HAL_IWDG_Refresh(&HIWDG);
+	HAL_IWDG_Refresh(&hiwdg);
 
 	HAL_FLASH_Unlock();                                                                                   //unlock flash writing
 	FLASH_EraseInitTypeDef erase;
@@ -85,7 +85,7 @@ void saveSettings(bool wipeAllProfileData) {
 		}
 
 	//Clear watchdog before writing
-	HAL_IWDG_Refresh(&HIWDG);
+	HAL_IWDG_Refresh(&hiwdg);
 
 	//Store settings
 	for (uint16_t i = 0; i < sizeof(flashSettings_t) / 2; i++) {
@@ -144,24 +144,26 @@ void restoreSettings() {
 
 uint32_t ChecksumSettings(settings_t* settings){
 	uint32_t checksum;
-	checksum = HAL_CRC_Calculate(&HCRC, (uint32_t*)settings, sizeof(settings_t)/sizeof(uint32_t) );
+	checksum = HAL_CRC_Calculate(&hcrc, (uint32_t*)settings, sizeof(settings_t)/sizeof(uint32_t) );
 	return checksum;
 }
 
 uint32_t ChecksumProfile(profile_t* profile){
 	uint32_t checksum;
-	checksum = HAL_CRC_Calculate(&HCRC, (uint32_t*)profile, sizeof(profile_t)/sizeof(uint32_t));
+	checksum = HAL_CRC_Calculate(&hcrc, (uint32_t*)profile, sizeof(profile_t)/sizeof(uint32_t));
 	return checksum;
 }
 
 void resetSystemSettings(void) {
 	systemSettings.settings.version 		      = SETTINGS_VERSION;
 	systemSettings.settings.contrast 			    = 255;
+	systemSettings.settings.screenDimming 	  = true;
 	systemSettings.settings.OledOffset 			  = 2;
 	systemSettings.settings.errorDelay			  = 500;
 	systemSettings.settings.guiUpdateDelay	  = 200;
 	systemSettings.settings.tempUnit			    = mode_Celsius;
 	systemSettings.settings.tempStep			    = 5;
+	systemSettings.settings.activeDetection		= 1;
 	systemSettings.settings.saveSettingsDelay	= 5;
 	systemSettings.settings.currentProfile		= profile_None;
 	systemSettings.settings.initMode			    = mode_run;
@@ -178,6 +180,12 @@ void resetCurrentProfile(void){
 #ifdef NOSAVESETTINGS
 	systemSettings.settings.currentProfile=profile_T12; /// Force T12 when debugging. TODO this is not tested with the profiles update!
 #endif
+	char str[TipCharSize];
+	for(uint8_t x=0;x<TipCharSize;x++){
+	  str[x] = ' ';
+	}
+	str[TipCharSize-1] = 0;
+
 	if(systemSettings.settings.currentProfile==profile_T12){
 		systemSettings.Profile.ID = profile_T12;
 		for(uint8_t x = 0; x < TipSize; x++) {
@@ -189,6 +197,7 @@ void resetCurrentProfile(void){
 			systemSettings.Profile.tip[x].PID.Kd 		    = 3000;           // val = /1.000.000
 			systemSettings.Profile.tip[x].PID.maxI	    = 30;             // val = /100
 			systemSettings.Profile.tip[x].PID.minI 	    = 0;              // val = /100
+			strcpy(systemSettings.Profile.tip[x].name, str);              // Empty name
 		}
 		strcpy(systemSettings.Profile.tip[0].name, "T12 ");
 		systemSettings.Profile.currentNumberOfTips  = 1;
@@ -213,6 +222,7 @@ void resetCurrentProfile(void){
       systemSettings.Profile.tip[x].PID.Kd        = 3000;           // val = /1.000.000
       systemSettings.Profile.tip[x].PID.maxI      = 30;             // val = /100
       systemSettings.Profile.tip[x].PID.minI      = 0;              // val = /100
+      strcpy(systemSettings.Profile.tip[x].name, str);              // Empty name
 		}
 		strcpy(systemSettings.Profile.tip[0].name, "C245");
 		systemSettings.Profile.currentNumberOfTips	= 1;
@@ -236,6 +246,7 @@ void resetCurrentProfile(void){
       systemSettings.Profile.tip[x].PID.Kd        = 3000;           // val = /1.000.000
       systemSettings.Profile.tip[x].PID.maxI      = 30;             // val = /100
       systemSettings.Profile.tip[x].PID.minI      = 0;              // val = /100
+      strcpy(systemSettings.Profile.tip[x].name, str);              // Empty name
 		}
 		strcpy(systemSettings.Profile.tip[0].name, "C210");
 		systemSettings.Profile.currentNumberOfTips  = 1;
@@ -305,7 +316,7 @@ void Flash_error(void){
 	putStrAligned("FLASH!", 32, align_center);
 	update_display();
 	while(1){
-		HAL_IWDG_Refresh(&HIWDG);
+		HAL_IWDG_Refresh(&hiwdg);
 	}
 }
 void settingsChkErr(void){
@@ -355,14 +366,14 @@ void Button_reset(void){
 		putStrAligned("DEFAULTS", 32, align_center);
 		update_display();
 		while(!BUTTON_input()){
-			HAL_IWDG_Refresh(&HIWDG);
+			HAL_IWDG_Refresh(&hiwdg);
 			if((HAL_GetTick()-ResetTimer)>5000){
 				FillBuffer(BLACK,fill_dma);
 				putStrAligned("RELEASE", 12, align_center);
 				putStrAligned("BUTTON NOW", 28, align_center);
 				update_display();
 				while(!BUTTON_input()){
-					HAL_IWDG_Refresh(&HIWDG);
+					HAL_IWDG_Refresh(&hiwdg);
 				}
 				resetSystemSettings();
 				saveSettings(saveWipingProfiles);
@@ -382,7 +393,7 @@ void ErrCountDown(uint8_t Start,uint8_t  xpos, uint8_t ypos){
 	else{
 		length=1;
 	}
-	HAL_IWDG_Refresh(&HIWDG);
+	HAL_IWDG_Refresh(&hiwdg);
 	while(oled.status!=oled_idle);  // Wait for the srceen to be idle (few mS at most). Hanging here will cause a watchdog reset.
 	//HAL_Delay(20);				        // (Old) Dirty fix to ensure Oled DMA transfer has ended before writing to the buffer
 
@@ -395,7 +406,7 @@ void ErrCountDown(uint8_t Start,uint8_t  xpos, uint8_t ypos){
 		u8g2_DrawStr(&u8g2,xpos,ypos,str);
 		update_display();
 		while( (HAL_GetTick()-timErr)<999 ){
-			HAL_IWDG_Refresh(&HIWDG);			// Clear watchdog
+			HAL_IWDG_Refresh(&hiwdg);			// Clear watchdog
 		}
 	}
 }
