@@ -139,7 +139,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 				setModefromStand(mode_run);
 			}
 			else{
-				setModefromStand(mode_sleep);
+				setModefromStand(mode_standby);
 			}
 		}
 		else{																															// In shake mode

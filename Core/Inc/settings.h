@@ -80,6 +80,7 @@ enum{
 	mode_Farenheit	    = 1,
 
 	mode_sleep		      = 0,
+	mode_standby		= 2,
 	mode_run		        = 1,
 
 	initialized		      = 0,

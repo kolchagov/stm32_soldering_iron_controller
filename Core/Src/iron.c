@@ -97,9 +97,15 @@ void handleIron(void) {
   // Controls inactivity timer and enters low power modes
   if(Iron.CurrentMode==mode_run) {
     if((Iron.calibrating==calibration_Off ) && (systemSettings.Profile.sleepTimeout>0) && ((CurrentTime - Iron.CurrentModeTimer)>(uint32_t)systemSettings.Profile.sleepTimeout*60000) ) {
-      setCurrentMode(mode_sleep);
+      setCurrentMode(mode_standby);
     }
+  } else if(Iron.CurrentMode == mode_standby) {
+	  if((systemSettings.Profile.sleepTimeout>0) && ((CurrentTime - Iron.CurrentModeTimer)>(uint32_t)systemSettings.Profile.sleepTimeout*60000*2) ) {
+		setCurrentMode(mode_sleep);
+	  }
   }
+
+
 
   // If there are pending PWM settings to be applied, apply them before new calculation
   if(Iron.updatePwm==needs_update){
@@ -340,7 +346,21 @@ void setCurrentMode(uint8_t mode){
   Iron.CurrentModeTimer = HAL_GetTick();            // Refresh current mode timer
   if(Iron.CurrentMode != mode){                     // If current mode is different
     if(mode==mode_run){
+      if(Iron.CurrentMode == mode_standby || Iron.CurrentMode == mode_sleep) {
+    	  //Reset temperature to default
+    	  Iron.CurrentSetTemperature = Iron.CurrentSetTemperature = systemSettings.Profile.UserSetTemperature;
+      }
       resetPID();                                   // Reset PID if returning to run mode
+    }
+    if(mode==mode_standby) {						// Prepare standby mode
+      //set temperature to minimum profile value
+    	Iron.CurrentSetTemperature = systemSettings.Profile.MinSetTemperature;
+    	//set temperature to 200 degree Celsius
+//      bool unit = systemSettings.settings.tempUnit;
+//      Iron.CurrentSetTemperature = 200;
+//	  if(unit == mode_Farenheit) {
+//    	  Iron.CurrentSetTemperature = TempConversion(Iron.CurrentSetTemperature, unit,0);
+//      }
     }
     buzzer_long_beep();
     Iron.CurrentMode = mode;
